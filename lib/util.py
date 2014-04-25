@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
 import os, sys, time, binascii
 
-def sleep(ms):
-	time.sleep(ms/1000.0)
-	
-ABORTREQUESTED = False
-def abortRequested():
-	return ABORTREQUESTED
-	
+_SETTINGS = {}
+
 def ERROR(txt,hide_tb=False,notify=False):
 	if isinstance (txt,str): txt = txt.decode("utf-8")
 	short = str(sys.exc_info()[1])
@@ -23,11 +18,26 @@ def LOG(message):
 	message = 'speech.server: ' + message
 	print message
 	
+def sleep(ms):
+	time.sleep(ms/1000.0)
+	
+ABORTREQUESTED = False
+def abortRequested():
+	return ABORTREQUESTED
+
+def profileDirectory():
+	import tempfile
+	return tempfile.gettempdir()
+
+def backendsDirectory():
+	return os.path.join(os.path.dirname(__file__),'backends')
+	
 def getSetting(key,default=None):
-	return default
+	return processSetting(_SETTINGS.get(key),default)
 
 def setSetting(key,value):
-	pass
+	global _SETTINGS
+	_SETTINGS[key] = processSettingForWrite(value)
 
 def processSetting(setting,default):
 	if not setting: return default
@@ -48,12 +58,18 @@ def processSettingForWrite(value):
 		value = value and 'true' or 'false'
 	return str(value)
 	
-def get_tmpfs():
+def getTmpfs():
 	for tmpfs in ('/run/shm','/dev/shm','/tmp'):
 		if os.path.exists(tmpfs): return tmpfs
 	import tempfile
 	return tempfile.gettempdir()
-		
+	
+def isWindows():
+	return sys.platform.lower().startswith('win')
+
+def isOSX():
+	return sys.platform.lower().startswith('darwin')
+	
 def isATV2():
 	return False
 	
