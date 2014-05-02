@@ -98,6 +98,8 @@ class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 		if '?' in self.path: data = dict(urlparse.parse_qsl(self.path.split('?')[-1]))
 		if path == '/voices':
 			self.voices(data)
+		elif path == '/version':
+			self.version()
 		else:
 			self.sendCode(404)
 			
@@ -172,6 +174,17 @@ class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 		if not engines: return self.sendCode(500)
 		data = StringIO.StringIO()
 		data.write(engines)
+		self.send_response(200)
+		self.send_header('Content-Type','text/plain')
+		self.send_header("Content-Length", str(data.tell()))
+		self.end_headers()
+		data.seek(0)
+		shutil.copyfileobj(data,self.wfile)
+		data.close()
+		
+	def version(self):
+		data = StringIO.StringIO()
+		data.write('speech.server {0}'.format(__version__))
 		self.send_response(200)
 		self.send_header('Content-Type','text/plain')
 		self.send_header("Content-Length", str(data.tell()))
