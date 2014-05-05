@@ -1,13 +1,19 @@
 #! /usr/bin/env python
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
-import socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy
+import os, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy
 from lib import backends
 from lib import util
+from lib import appdirs
 
 TTS = None
+SERVER = None
+ACTIVE = True
 
+user_path = appdirs.user_data_dir('speech.server','ruuksoft')
+CONFIG_PATH = os.path.join(user_path,'config.txt')
+		
 class TTSHandler:
 	preferred_player = None
 	def __init__(self):
@@ -213,7 +219,7 @@ def validateAddressOption(option, opt, value):
 	raise optparse.OptionValueError('Option {0} Invalid: {1}'.format(opt,value))
 
 def validatePlayerOption(option, opt, value):
-	if value in ('aplay','paplay','sox','mplayer'): return value
+	if value in ('aplay','paplay','sox','mplayer','mpg123'): return value
 	raise optparse.OptionValueError('Invalid player: {0}. Valid players: aplay, paplay, sox and mplayer'.format(value))
 
 class ExtendedOption(optparse.Option):
@@ -225,9 +231,11 @@ class ExtendedOption(optparse.Option):
 def parseArguments():
 	description = 'Ex: python server.py -a 192.168.1.50 -p 12345'
 	parser = optparse.OptionParser(option_class=ExtendedOption, description=description , version='speech.server {0}'.format(__version__))
-	parser.add_option("-a", "--address", dest="address", type="address", help="address the server binds to [default: ANY]", metavar="ADDR", default='')
-	parser.add_option("-p", "--port", dest="port", type="int", help="port the server listens on [default: 8256]", metavar="PORT", default=8256)
+	parser.add_option("-a", "--address", dest="address", type="address", help="address the server binds to [default: ANY]", metavar="ADDR")
+	parser.add_option("-p", "--port", dest="port", type="int", help="port the server listens on [default: 8256]", metavar="PORT")
 	parser.add_option("-P", "--player", dest="player", type="player", help="player command to use when playing speech [default: ANY]", metavar="PLAYER")
+	parser.add_option("-c", "--configure", dest="configure", action="store_true", help="save command line options as defaults")
+	parser.add_option("-e", "--edit", dest="edit", action="store_true", help="edit the config file in the default editor")
 	return parser.parse_args()
 	
 def getAddressForConnect(fallback):
@@ -237,17 +245,101 @@ def getAddressForConnect(fallback):
 		pass
 	return fallback
 	
-def start():
-	options, args = parseArguments()
+def editConfig():
+	import sys
+	if sys.platform.startswith('win'):
+		cmd = 'cmd /c start %s' % CONFIG_PATH
+	elif sys.platform.startswith('darwin'):
+		cmd = 'open %s' % CONFIG_PATH
+	else:
+		cmd = os.environ.get('EDITOR') or os.environ.get('HGEDITOR') or os.environ.get('VISUAL')
+		if not cmd:
+			if util.commandIsAvailable('nano'):
+				cmd = 'nano %s' % CONFIG_PATH
+			elif util.commandIsAvailable('pico'):
+				cmd = 'pico %s' % CONFIG_PATH
+			else:
+				cmd = 'vi %s' % CONFIG_PATH
+	os.system(cmd)
+
+class ServerOptions:
+	def __init__(self,options=None):
+		config = ConfigParser.ConfigParser({'address':'','port':8256,'player':None})
+		if os.path.exists(CONFIG_PATH):
+			config.read(CONFIG_PATH)
+		if not config.has_section('settings'): config.add_section('settings')
+		
+		if options:
+			self.address = options.address or config.get('settings','address')
+			self.port = options.port or config.getint('settings','port')
+			self.player = options.player or config.get('settings','player')
+			if options.configure: self.saveConfig(config, CONFIG_PATH)
+		else:
+			self.address = config.get('settings','address')
+			self.port = config.get('settings','port')
+			self.player = config.get('settings','player')
+			
+	def saveConfig(self, config, config_path):
+		config._defaults = None
+		config.set('settings','address',self.address)
+		config.set('settings','port',self.port)
+		config.set('settings','player',self.player)
+		with open(config_path,'w') as cf: config.write(cf)
+		
+			
+def shutdownServer():
+	global ACTIVE
+	ACTIVE = False
+	import urllib2
+	try:
+		urllib2.urlopen('http://{0}:{1}'.format(*SERVER.server_address))
+		return
+	except:
+		pass
+	try:
+		urllib2.urlopen('http://{0}:{1}'.format('127.0.0.1',SERVER.server_address[1]))
+		return
+	except:
+		pass
+	
+	
+def setup():
+	backends.removeBackendsByProvider(('ttsd',))
+
+	user_path = appdirs.user_data_dir('speech.server','ruuksoft')
+	if not os.path.exists(user_path): os.makedirs(user_path)
+	util.LOG('Config file stored at: {0}'.format(CONFIG_PATH))
+	if os.path.exists(CONFIG_PATH):
+		return
+	config = ConfigParser.ConfigParser()
+	config.add_section('settings')
+	config.set('settings','address','')
+	config.set('settings','port','8259')
+	config.set('settings','player','')
+	with open(CONFIG_PATH,'w') as cf: config.write(cf)
+
+def start(main=False):
+	global TTS, SERVER
+	
+	setup()
+	
+	TTS = TTSHandler()
+	if main:
+		cl_options, args = parseArguments()
+		if cl_options.edit: return editConfig()
+		options = ServerOptions(cl_options)
+	else:
+		options = ServerOptions()
+		
 	server_address = (options.address,options.port)
 	TTSHandler.preferred_player = options.player
-	httpd = BaseHTTPServer.HTTPServer(server_address, SpeechHTTPRequestHandler)
-	util.LOG('STARTED - Address: {0} Port: {1}'.format(*httpd.server_address))
+	SERVER = BaseHTTPServer.HTTPServer(server_address, SpeechHTTPRequestHandler)
+	util.LOG('STARTED - Address: {0} Port: {1}'.format(*SERVER.server_address))
 	
-	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(httpd.server_address[0]),httpd.server_address[1]))
-	while True:
+	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(SERVER.server_address[0]),SERVER.server_address[1]))
+	while ACTIVE:
 		try:
-			httpd.handle_request()
+			SERVER.handle_request()
 		except KeyboardInterrupt:
 			util.ABORTREQUESTED = True
 			TTS.close()
@@ -258,5 +350,4 @@ def start():
 	util.LOG('ENDED')
 	
 if __name__ == '__main__':
-	TTS = TTSHandler()
-	start()
+	start(main=True)
