@@ -2,12 +2,26 @@
 ### Run Python scripts as a service example (ryrobes.com)
 ### Usage : python aservice.py install (or / then start, stop, remove)
 
-import win32service
-import win32serviceutil
-import win32api
-import win32event
-from lib import util
 import sys
+
+if __name__ == '__main__':
+	if not sys.platform.startswith('win'):
+		print 'THIS SERVICE MUST BE RUN ON WINDOWS'
+		sys.exit()
+try:
+	import win32service
+	import win32serviceutil
+	import win32api
+	import win32event
+except:
+	print 'Please install Python for Windows extensions from:'
+	print 'http://sourceforge.net/projects/pywin32'
+	import struct
+	bits = struct.calcsize("P") * 8
+	print 'Download and install the {0} bit version for Python {1}.{2}'.format(bits,sys.version_info.major,sys.version_info.minor)
+	sys.exit()
+	
+from lib import util
 
 class aservice(win32serviceutil.ServiceFramework):
 	_svc_name_ = "speech.server"
@@ -69,5 +83,3 @@ if __name__ == '__main__':
 		util.LOG = LOG
 		win32api.SetConsoleCtrlHandler(ctrlHandler, True)	 
 		win32serviceutil.HandleCommandLine(aservice)
-	else:
-		print 'THIS SERVICE MUST BE RUN ON WINDOWS'
