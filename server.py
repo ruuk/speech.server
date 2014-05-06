@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 
 import os, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy
 from lib import backends
@@ -234,7 +234,7 @@ def parseArguments():
 	parser.add_option("-a", "--address", dest="address", type="address", help="address the server binds to [default: ANY]", metavar="ADDR")
 	parser.add_option("-p", "--port", dest="port", type="int", help="port the server listens on [default: 8256]", metavar="PORT")
 	parser.add_option("-P", "--player", dest="player", type="player", help="player command to use when playing speech [default: ANY]", metavar="PLAYER")
-	parser.add_option("-c", "--configure", dest="configure", action="store_true", help="save command line options as defaults")
+	parser.add_option("-c", "--configure", dest="configure", action="store_true", help="save command line options as defaults and exit")
 	parser.add_option("-e", "--edit", dest="edit", action="store_true", help="edit the config file in the default editor")
 	return parser.parse_args()
 	
@@ -285,6 +285,7 @@ class ServerOptions:
 		config.set('settings','port',self.port)
 		config.set('settings','player',self.player)
 		with open(config_path,'w') as cf: config.write(cf)
+		util.LOG('Settings saved!'.format(CONFIG_PATH))
 		
 			
 def shutdownServer():
@@ -308,13 +309,13 @@ def setup():
 
 	user_path = appdirs.user_data_dir('speech.server','ruuksoft')
 	if not os.path.exists(user_path): os.makedirs(user_path)
-	util.LOG('Config file stored at: {0}'.format(CONFIG_PATH))
+	util.LOG('Config file located at: {0}'.format(CONFIG_PATH))
 	if os.path.exists(CONFIG_PATH):
 		return
 	config = ConfigParser.ConfigParser()
 	config.add_section('settings')
 	config.set('settings','address','')
-	config.set('settings','port','8259')
+	config.set('settings','port','8256')
 	config.set('settings','player','')
 	with open(CONFIG_PATH,'w') as cf: config.write(cf)
 
@@ -328,6 +329,7 @@ def start(main=False):
 		cl_options, args = parseArguments()
 		if cl_options.edit: return editConfig()
 		options = ServerOptions(cl_options)
+		if cl_options.configure: return
 	else:
 		options = ServerOptions()
 		
