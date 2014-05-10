@@ -2,7 +2,7 @@
 
 __version__ = '0.0.4'
 
-import os, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy
+import os, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy, threading
 from lib import backends
 from lib import util
 from lib import appdirs
@@ -106,6 +106,9 @@ class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 			self.voices(data)
 		elif path == '/version':
 			self.version()
+		elif path == '/shutdown':
+			self.send_response(200)
+			self.end_headers()
 		else:
 			self.sendCode(404)
 			
@@ -248,9 +251,9 @@ def getAddressForConnect(fallback):
 def editConfig():
 	import sys
 	if sys.platform.startswith('win'):
-		cmd = 'cmd /c start %s' % CONFIG_PATH
+		cmd = 'cmd /c "%s"' % CONFIG_PATH
 	elif sys.platform.startswith('darwin'):
-		cmd = 'open %s' % CONFIG_PATH
+		cmd = 'open "%s"' % CONFIG_PATH
 	else:
 		cmd = os.environ.get('EDITOR') or os.environ.get('HGEDITOR') or os.environ.get('VISUAL')
 		if not cmd:
@@ -276,7 +279,7 @@ class ServerOptions:
 			if options.configure: self.saveConfig(config, CONFIG_PATH)
 		else:
 			self.address = config.get('settings','address')
-			self.port = config.get('settings','port')
+			self.port = config.getint('settings','port')
 			self.player = config.get('settings','player')
 			
 	def saveConfig(self, config, config_path):
@@ -293,12 +296,15 @@ def shutdownServer():
 	ACTIVE = False
 	import urllib2
 	try:
-		urllib2.urlopen('http://{0}:{1}'.format(*SERVER.server_address))
+		urllib2.urlopen('http://{0}:{1}/shutdown'.format(*SERVER.server_address))
+		return
+	except urllib2.HTTPError: #404 Not Found
 		return
 	except:
 		pass
+		
 	try:
-		urllib2.urlopen('http://{0}:{1}'.format('127.0.0.1',SERVER.server_address[1]))
+		urllib2.urlopen('http://{0}:{1}/shutdown'.format('127.0.0.1',SERVER.server_address[1]))
 		return
 	except:
 		pass
@@ -347,9 +353,16 @@ def start(main=False):
 			TTS.close()
 			break
 	util.LOG('Shutting down...')
-	import threading, time
-	while threading.active_count() > 1: time.sleep(0.1)
+	if main:
+		import time
+		while threading.active_count() > 2: time.sleep(0.1)
 	util.LOG('ENDED')
 	
 if __name__ == '__main__':
-	start(main=True)
+	t = threading.Thread(target=start,kwargs={'main':True})
+	t.start()
+	try:
+		while t.isAlive():
+			t.join(0.5)
+	except KeyboardInterrupt:
+		shutdownServer()
