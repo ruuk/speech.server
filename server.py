@@ -2,10 +2,11 @@
 
 __version__ = '0.0.4'
 
-import os, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy, threading
+import os, sys, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy, threading
 from lib import backends
 from lib import util
 from lib import appdirs
+from lib import cherrypy
 
 TTS = None
 SERVER = None
@@ -298,20 +299,8 @@ class ServerOptions:
 def shutdownServer():
 	global ACTIVE
 	ACTIVE = False
-	import urllib2
-	try:
-		urllib2.urlopen('http://{0}:{1}/shutdown'.format(*SERVER.server_address))
-		return
-	except urllib2.HTTPError: #404 Not Found
-		return
-	except:
-		pass
-		
-	try:
-		urllib2.urlopen('http://{0}:{1}/shutdown'.format('127.0.0.1',SERVER.server_address[1]))
-		return
-	except:
-		pass
+	TTS.close()
+	SERVER.stop()
 	
 	
 def setup():
@@ -330,17 +319,53 @@ def setup():
 	with open(CONFIG_PATH,'w') as cf: config.write(cf)
 
 import SocketServer
-class ThreadingHTTPServer(SocketServer.ThreadingTCPServer):
+
+class TTSHTTPServer:
 
 	allow_reuse_address = 1    # Seems to make sense in testing environment
-
+	
+	def __init__(self,*args,**kwargs):
+		SocketServer.TCPServer.__init__(self,*args,**kwargs)
+		self.is_shut_down = threading.Event()
+		self.shutdown_requested = False
+		
 	def server_bind(self):
 		"""Override server_bind to store the server name."""
 		SocketServer.TCPServer.server_bind(self)
 		host, port = self.socket.getsockname()[:2]
 		self.server_name = socket.getfqdn(host)
 		self.server_port = port
-								
+		
+	def start(self):
+		self.is_shut_down.clear()
+		try:
+			while not self.shutdown_requested:
+				self.handle_request()
+		finally:
+			self.shutdown_requested = False
+			self.is_shut_down.set()
+		
+	def stop(self):
+		self.shutdown_requested = True
+		import urllib2
+		while not self.is_shut_down.isSet():
+			try:
+				urllib2.urlopen('http://{0}:{1}/shutdown'.format(*self.server_address))
+				return
+			except urllib2.HTTPError: #404 Not Found
+				return
+			except:
+				pass
+				
+			try:
+				urllib2.urlopen('http://{0}:{1}/shutdown'.format('127.0.0.1',SERVER.server_address[1]))
+				return
+			except:
+				pass
+					
+class ThreadingHTTPServer(TTSHTTPServer,SocketServer.ThreadingTCPServer): pass
+class NormalHTTPServer(TTSHTTPServer,SocketServer.TCPServer): pass
+	
 def start(main=False):
 	global TTS, SERVER
 	
@@ -357,22 +382,23 @@ def start(main=False):
 		
 	server_address = (options.address,options.port)
 	TTSHandler.preferred_player = options.player
-	SERVER = ThreadingHTTPServer(server_address, SpeechHTTPRequestHandler)
+	
+	if sys.platform.startswith('win'):
+		SERVER = NormalHTTPServer(server_address, SpeechHTTPRequestHandler)
+	else:
+		SERVER = ThreadingHTTPServer(server_address, SpeechHTTPRequestHandler)
+		
 	util.LOG('STARTED - Address: {0} Port: {1}'.format(*SERVER.server_address))
 	
 	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(SERVER.server_address[0]),SERVER.server_address[1]))
-	while ACTIVE:
-		try:
-			SERVER.handle_request()
-		except KeyboardInterrupt:
-			util.ABORTREQUESTED = True
-			TTS.close()
-			break
+	try:
+		SERVER.start()
+	finally:
+		TTS.close()
 	util.LOG('Shutting down...')
 	if main:
 		import time
-		#print threading.enumerate()
-		while threading.active_count() > 3: time.sleep(0.1)
+		while threading.active_count() > 2: time.sleep(0.1)
 	util.LOG('ENDED')
 	
 if __name__ == '__main__':
