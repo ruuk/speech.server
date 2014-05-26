@@ -28,7 +28,7 @@ class TTSHandler:
 			backend = backends.getWavStreamBackend(provider)
 		else:
 			backend = backends.getBackend(provider)
-		if backend:
+		if backend and (not self.backend or backend.provider != self.backend.provider):
 			if self.backend: self.backend._close()
 			if self.preferred_player:
 				util.setSetting('player.' + provider, self.preferred_player)
@@ -63,10 +63,10 @@ class TTSHandler:
 		backend = None
 		if provider: backend = backends.getBackend(provider)
 		if not backend: return
-		with backend() as backend: voices = backend.voices()
+		voices = backend.settingList('voice')
 		if not voices: return None
 		for i in range(len(voices)):
-			voices[i] = '{0}.{1}'.format(backend.provider,voices[i])
+			voices[i] = '{0}.{1}'.format(backend.provider,voices[i][0])
 		return '\n'.join(voices)
 
 	def engines(self,can_stream_wav=False):
@@ -99,6 +99,7 @@ class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 		pass
 
 	def do_GET(self):
+		self.wfile._sock.settimeout(5)
 		path = self.path.split('?')[0]
 		data = {}
 		if '?' in self.path: data = dict(urlparse.parse_qsl(self.path.split('?')[-1]))
@@ -111,8 +112,10 @@ class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 			self.end_headers()
 		else:
 			self.sendCode(404)
+		self.finish()
 			
 	def do_POST(self):
+		self.wfile._sock.settimeout(5)
 		postData = PostData(self)
 		
 		if self.path == '/wav' or self.path == '/speak.wav':
@@ -129,6 +132,7 @@ class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 			self.engines(can_stream_wav=False)
 		else:
 			self.sendCode(404)
+		self.finish()
 
 	def wav(self,postData):
 		TTS.setEngine(postData.get('engine'),True)
@@ -325,6 +329,18 @@ def setup():
 	config.set('settings','player','')
 	with open(CONFIG_PATH,'w') as cf: config.write(cf)
 
+import SocketServer
+class ThreadingHTTPServer(SocketServer.ThreadingTCPServer):
+
+	allow_reuse_address = 1    # Seems to make sense in testing environment
+
+	def server_bind(self):
+		"""Override server_bind to store the server name."""
+		SocketServer.TCPServer.server_bind(self)
+		host, port = self.socket.getsockname()[:2]
+		self.server_name = socket.getfqdn(host)
+		self.server_port = port
+								
 def start(main=False):
 	global TTS, SERVER
 	
@@ -341,7 +357,7 @@ def start(main=False):
 		
 	server_address = (options.address,options.port)
 	TTSHandler.preferred_player = options.player
-	SERVER = BaseHTTPServer.HTTPServer(server_address, SpeechHTTPRequestHandler)
+	SERVER = ThreadingHTTPServer(server_address, SpeechHTTPRequestHandler)
 	util.LOG('STARTED - Address: {0} Port: {1}'.format(*SERVER.server_address))
 	
 	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(SERVER.server_address[0]),SERVER.server_address[1]))
@@ -355,11 +371,12 @@ def start(main=False):
 	util.LOG('Shutting down...')
 	if main:
 		import time
-		while threading.active_count() > 2: time.sleep(0.1)
+		#print threading.enumerate()
+		while threading.active_count() > 3: time.sleep(0.1)
 	util.LOG('ENDED')
 	
 if __name__ == '__main__':
-	t = threading.Thread(target=start,kwargs={'main':True})
+	t = threading.Thread(target=start,name='Server',kwargs={'main':True})
 	t.start()
 	try:
 		while t.isAlive():

@@ -25,6 +25,10 @@ ABORTREQUESTED = False
 def abortRequested():
 	return ABORTREQUESTED
 
+def configDirectory():
+	from lib import appdirs
+	return appdirs.user_data_dir('speech.server','ruuksoft')
+	
 def profileDirectory():
 	import tempfile
 	return tempfile.gettempdir()
