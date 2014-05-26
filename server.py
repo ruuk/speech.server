@@ -1,16 +1,16 @@
 #! /usr/bin/env python
 
-__version__ = '0.0.4'
+__version__ = '0.0.5'
 
-import os, sys, ConfigParser, socket, BaseHTTPServer, cgi, urlparse, shutil, StringIO, optparse, copy, threading
+import os, sys, ConfigParser, socket, cgi, optparse, copy
+sys.path.insert(0,os.path.join(os.path.dirname(__file__),'lib'))
 from lib import backends
 from lib import util
 from lib import appdirs
-from lib import cherrypy
+import cherrypy
+from cherrypy.lib import file_generator
 
 TTS = None
-SERVER = None
-ACTIVE = True
 
 user_path = appdirs.user_data_dir('speech.server','ruuksoft')
 CONFIG_PATH = os.path.join(user_path,'config.txt')
@@ -94,126 +94,66 @@ class PostData():
 	def get(self,name,default=None):
 		if not name in self.form: return default
 		return self.form[name].value
+
+@cherrypy.popargs('method')
+class SpeechHTTPRequestHandler(object):
+	def __init__(self):
+		cherrypy.engine.subscribe('stop', self.finish)
+		
+	def finish(self):
+		TTS.close()
 	
-class SpeechHTTPRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
-	def log_message(self,fmt,*args):
-		pass
-
-	def do_GET(self):
-		self.wfile._sock.settimeout(5)
-		path = self.path.split('?')[0]
-		data = {}
-		if '?' in self.path: data = dict(urlparse.parse_qsl(self.path.split('?')[-1]))
-		if path == '/voices':
-			self.voices(data)
-		elif path == '/version':
-			self.version()
-		elif path == '/shutdown':
-			self.send_response(200)
-			self.end_headers()
-		else:
-			self.sendCode(404)
-		self.finish()
-			
-	def do_POST(self):
-		self.wfile._sock.settimeout(5)
-		postData = PostData(self)
-		
-		if self.path == '/wav' or self.path == '/speak.wav':
-			self.wav(postData)
-		elif self.path == '/say':
-			self.say(postData)
-		elif self.path == '/stop':
-			self.stop()
-		elif self.path == '/voices':
-			self.voices(postData.get('engine'))
-		elif self.path == '/engines/wav':
-			self.engines(can_stream_wav=True)
-		elif self.path == '/engines/say':
-			self.engines(can_stream_wav=False)
-		else:
-			self.sendCode(404)
-		self.finish()
-
-	def wav(self,postData):
-		TTS.setEngine(postData.get('engine'),True)
-		TTS.setVoice(postData.get('voice'))
-		TTS.setRate(postData.get('rate'))
+	@cherrypy.expose
+	def shutdown(self):
+		shutdownServer()
+	
+	@cherrypy.expose(['speak.wav'])
+	def wav(self,engine=None,voice=None,rate=None,text=None):
+		TTS.setEngine(engine,True)
+		TTS.setVoice(voice)
+		TTS.setRate(rate)
 		TTS.update()
-		text = postData.get('text')
 		wav = TTS.getWavStream(text)
-		if not wav: return self.sendCode(403)
+		if not wav: raise cherrypy.HTTPError(status=403)
 		util.LOG('WAV: {0}'.format(text.decode('utf-8')))
-		self.send_response(200)
-		self.send_header('Content-Type','audio/x-wav')
-		wav.seek(0,2) #Seek to the end to get the size with tell()
-		self.send_header("Content-Length", str(wav.tell()))
 		wav.seek(0)
-		self.end_headers()
-		shutil.copyfileobj(wav,self.wfile)
-		wav.close()
-		
-	def say(self,postData):
-		TTS.setEngine(postData.get('engine'))
-		TTS.setVoice(postData.get('voice'))
-		TTS.setRate(postData.get('rate'))
+		cherrypy.response.headers['Content-Type'] = "audio/x-wav"
+		return file_generator(wav)
+				
+	@cherrypy.expose
+	def say(self,engine=None,voice=None,rate=None,text=None):
+		TTS.setEngine(engine)
+		TTS.setVoice(voice)
+		TTS.setRate(rate)
 		TTS.update()
-		text = postData.get('text')
-		if not text: return self.sendCode(403)
+		if not text: raise cherrypy.HTTPError(status=403)
 		util.LOG('SAY: {0}'.format(text.decode('utf-8')))
-		self.send_response(200)
-		self.end_headers()
 		TTS.say(text)
+		return ''
 		
+	@cherrypy.expose
 	def stop(self):
 		TTS.stop()
-		self.send_response(200)
-		self.end_headers()
+		return ''
 		
-	def voices(self,postData):
-		voices = TTS.voices(postData.get('engine'))
-		if not voices: return self.sendCode(500)
-		data = StringIO.StringIO()
-		data.write(voices)
-		self.send_response(200)
-		self.send_header('Content-Type','text/plain')
-		self.send_header("Content-Length", str(data.tell()))
-		self.end_headers()
-		data.seek(0)
-		shutil.copyfileobj(data,self.wfile)
-		data.close()
+	@cherrypy.expose
+	def voices(self,engine=None):
+		voices = TTS.voices(engine)
+		if not voices: raise cherrypy.HTTPError(status=500)
+		return voices
+		
+	@cherrypy.expose
+	def engines(self,method=None):
+		engines = TTS.engines(method=='wav')
+		if not engines: raise cherrypy.HTTPError(status=500)
+		return engines
 	
-	def engines(self,can_stream_wav=False):
-		engines = TTS.engines(can_stream_wav)
-		if not engines: return self.sendCode(500)
-		data = StringIO.StringIO()
-		data.write(engines)
-		self.send_response(200)
-		self.send_header('Content-Type','text/plain')
-		self.send_header("Content-Length", str(data.tell()))
-		self.end_headers()
-		data.seek(0)
-		shutil.copyfileobj(data,self.wfile)
-		data.close()
-		
+	@cherrypy.expose
 	def version(self):
-		data = StringIO.StringIO()
-		data.write('speech.server {0}'.format(__version__))
-		self.send_response(200)
-		self.send_header('Content-Type','text/plain')
-		self.send_header("Content-Length", str(data.tell()))
-		self.end_headers()
-		data.seek(0)
-		shutil.copyfileobj(data,self.wfile)
-		data.close()
-		
-	def sendCode(self,code):
-		util.LOG('Sending code: {0}'.format(code))
-		self.send_response(code)
-		self.end_headers()
+		return 'speech.server {0}'.format(__version__)
 
 def validateAddressOption(option, opt, value):
-	if value == '': return value
+	if value == '0.0.0.0': return value
 	try:
 		socket.inet_pton(socket.AF_INET, value)
 		return value
@@ -272,7 +212,7 @@ def editConfig():
 
 class ServerOptions:
 	def __init__(self,options=None):
-		config = ConfigParser.ConfigParser({'address':'','port':8256,'player':None})
+		config = ConfigParser.ConfigParser({'address':'0.0.0.0','port':8256,'player':None})
 		if os.path.exists(CONFIG_PATH):
 			config.read(CONFIG_PATH)
 		if not config.has_section('settings'): config.add_section('settings')
@@ -297,10 +237,9 @@ class ServerOptions:
 		
 			
 def shutdownServer():
-	global ACTIVE
-	ACTIVE = False
 	TTS.close()
-	SERVER.stop()
+	import signal
+	os.kill(os.getpid(),signal.SIGTERM)
 	
 	
 def setup():
@@ -313,58 +252,10 @@ def setup():
 		return
 	config = ConfigParser.ConfigParser()
 	config.add_section('settings')
-	config.set('settings','address','')
+	config.set('settings','address','0.0.0.0')
 	config.set('settings','port','8256')
 	config.set('settings','player','')
 	with open(CONFIG_PATH,'w') as cf: config.write(cf)
-
-import SocketServer
-
-class TTSHTTPServer:
-
-	allow_reuse_address = 1    # Seems to make sense in testing environment
-	
-	def __init__(self,*args,**kwargs):
-		SocketServer.TCPServer.__init__(self,*args,**kwargs)
-		self.is_shut_down = threading.Event()
-		self.shutdown_requested = False
-		
-	def server_bind(self):
-		"""Override server_bind to store the server name."""
-		SocketServer.TCPServer.server_bind(self)
-		host, port = self.socket.getsockname()[:2]
-		self.server_name = socket.getfqdn(host)
-		self.server_port = port
-		
-	def start(self):
-		self.is_shut_down.clear()
-		try:
-			while not self.shutdown_requested:
-				self.handle_request()
-		finally:
-			self.shutdown_requested = False
-			self.is_shut_down.set()
-		
-	def stop(self):
-		self.shutdown_requested = True
-		import urllib2
-		while not self.is_shut_down.isSet():
-			try:
-				urllib2.urlopen('http://{0}:{1}/shutdown'.format(*self.server_address))
-				return
-			except urllib2.HTTPError: #404 Not Found
-				return
-			except:
-				pass
-				
-			try:
-				urllib2.urlopen('http://{0}:{1}/shutdown'.format('127.0.0.1',SERVER.server_address[1]))
-				return
-			except:
-				pass
-					
-class ThreadingHTTPServer(TTSHTTPServer,SocketServer.ThreadingTCPServer): pass
-class NormalHTTPServer(TTSHTTPServer,SocketServer.TCPServer): pass
 	
 def start(main=False):
 	global TTS, SERVER
@@ -380,32 +271,18 @@ def start(main=False):
 	else:
 		options = ServerOptions()
 		
-	server_address = (options.address,options.port)
 	TTSHandler.preferred_player = options.player
-	
-	if sys.platform.startswith('win'):
-		SERVER = NormalHTTPServer(server_address, SpeechHTTPRequestHandler)
-	else:
-		SERVER = ThreadingHTTPServer(server_address, SpeechHTTPRequestHandler)
 		
-	util.LOG('STARTED - Address: {0} Port: {1}'.format(*SERVER.server_address))
+	util.LOG('STARTED - Address: {0} Port: {1}'.format(options.address,options.port))
 	
-	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(SERVER.server_address[0]),SERVER.server_address[1]))
+	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(options.address),options.port))
+	if sys.platform.startswith('win'): cherrypy.config.update({'server.thread_pool':1})
 	try:
-		SERVER.start()
+		cherrypy.config.update({'server.socket_host': options.address or '0.0.0.0', 'server.socket_port': options.port,'checker.on':False,'log.screen':False})
+		cherrypy.quickstart(SpeechHTTPRequestHandler())
 	finally:
 		TTS.close()
-	util.LOG('Shutting down...')
-	if main:
-		import time
-		while threading.active_count() > 2: time.sleep(0.1)
 	util.LOG('ENDED')
 	
 if __name__ == '__main__':
-	t = threading.Thread(target=start,name='Server',kwargs={'main':True})
-	t.start()
-	try:
-		while t.isAlive():
-			t.join(0.5)
-	except KeyboardInterrupt:
-		shutdownServer()
+	start()
