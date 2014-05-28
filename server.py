@@ -14,7 +14,12 @@ TTS = None
 
 user_path = appdirs.user_data_dir('speech.server','ruuksoft')
 CONFIG_PATH = os.path.join(user_path,'config.txt')
-		
+
+def strIsNumber(numstr):
+	try: float(numstr)
+	except: return False
+	return True
+
 class TTSHandler:
 	preferred_player = None
 	def __init__(self):
@@ -34,7 +39,6 @@ class TTSHandler:
 			if self.preferred_player:
 				util.setSetting('player.' + provider, self.preferred_player)
 			self.backend = backend()
-			util.LOG('Backend changed to: {0}'.format(self.backend.provider))
 
 	def setVoice(self,voice):
 		if not self.backend or not voice or not '.' in voice: return
@@ -44,13 +48,20 @@ class TTSHandler:
 		
 	def setRate(self,rate):
 		if not rate: return
-		try:
-			rate = int(rate)
-		except:
-			return
-		rate = self.backend.scaleSpeed(rate)
+		if not strIsNumber(rate): return
+		rate = self.backend.scaleSpeed(int(rate))
 		util.setSetting('speed.' + self.backend.provider, rate)
 		
+	def setPitch(self,pitch):
+		if not pitch: return
+		if not strIsNumber(pitch): return
+		util.setSetting('pitch.' + self.backend.provider, pitch)
+
+	def setVolume(self,volume):
+		if not volume: return
+		if not strIsNumber(volume): return
+		util.setSetting('volume.' + self.backend.provider, volume)
+	
 	def update(self):
 		if self.backend: self.backend.update()
 		
@@ -108,26 +119,30 @@ class SpeechHTTPRequestHandler(object):
 		shutdownServer()
 	
 	@cherrypy.expose(['speak.wav'])
-	def wav(self,engine=None,voice=None,rate=None,text=None):
+	def wav(self,engine=None,voice=None,rate=None,volume=None,text=None):
 		TTS.setEngine(engine,True)
 		TTS.setVoice(voice)
 		TTS.setRate(rate)
+		#TTS.setPitch(pitch)
+		TTS.setVolume(volume)
 		TTS.update()
 		wav = TTS.getWavStream(text)
 		if not wav: raise cherrypy.HTTPError(status=403)
-		util.LOG('WAV: {0}'.format(text.decode('utf-8')))
+		util.LOG('[{0}] {1} - WAV: {2}'.format(cherrypy.request.remote.ip,TTS.backend.provider,text.decode('utf-8')))
 		wav.seek(0)
 		cherrypy.response.headers['Content-Type'] = "audio/x-wav"
 		return file_generator(wav)
 				
 	@cherrypy.expose
-	def say(self,engine=None,voice=None,rate=None,text=None):
+	def say(self,engine=None,voice=None,rate=None,volume=None,text=None):
 		TTS.setEngine(engine)
 		TTS.setVoice(voice)
 		TTS.setRate(rate)
+		#TTS.setPitch(pitch)
+		TTS.setVolume(volume)
 		TTS.update()
 		if not text: raise cherrypy.HTTPError(status=403)
-		util.LOG('SAY: {0}'.format(text.decode('utf-8')))
+		util.LOG('[{0}] {1} - SAY: {2}'.format(cherrypy.request.remote.ip,TTS.backend.provider,text.decode('utf-8')))
 		TTS.say(text)
 		return ''
 		
@@ -243,7 +258,7 @@ def shutdownServer():
 	
 	
 def setup():
-	backends.removeBackendsByProvider(('ttsd',))
+	backends.removeBackendsByProvider(('ttsd','speechutil'))
 
 	user_path = appdirs.user_data_dir('speech.server','ruuksoft')
 	if not os.path.exists(user_path): os.makedirs(user_path)
@@ -262,7 +277,6 @@ def start(main=False):
 	
 	setup()
 	
-	TTS = TTSHandler()
 	if main:
 		cl_options, args = parseArguments()
 		if cl_options.edit: return editConfig()
@@ -270,12 +284,13 @@ def start(main=False):
 		if cl_options.configure: return
 	else:
 		options = ServerOptions()
+	
+	util.LOG('STARTED - Address: {0} Port: {1}'.format(options.address,options.port))
+	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(options.address),options.port))
 		
+	TTS = TTSHandler()
 	TTSHandler.preferred_player = options.player
 		
-	util.LOG('STARTED - Address: {0} Port: {1}'.format(options.address,options.port))
-	
-	util.LOG('Connect to {0}:{1}'.format(getAddressForConnect(options.address),options.port))
 	if sys.platform.startswith('win'): cherrypy.config.update({'server.thread_pool':1})
 	try:
 		cherrypy.config.update({'server.socket_host': options.address or '0.0.0.0', 'server.socket_port': options.port,'checker.on':False,'log.screen':False})
