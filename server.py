@@ -49,12 +49,13 @@ class TTSHandler:
 	def setRate(self,rate):
 		if not rate: return
 		if not strIsNumber(rate): return
-		rate = self.backend.scaleSpeed(int(rate))
+		rate = self.backend.scaleSpeed(int(rate),20)
 		util.setSetting('speed.' + self.backend.provider, rate)
 		
 	def setPitch(self,pitch):
 		if not pitch: return
 		if not strIsNumber(pitch): return
+		pitch = self.backend.scalePitch(int(pitch),50)
 		util.setSetting('pitch.' + self.backend.provider, pitch)
 
 	def setVolume(self,volume):
@@ -119,11 +120,11 @@ class SpeechHTTPRequestHandler(object):
 		shutdownServer()
 	
 	@cherrypy.expose(['speak.wav'])
-	def wav(self,engine=None,voice=None,rate=None,volume=None,text=None):
+	def wav(self,engine=None,voice=None,rate=None,pitch=None,volume=None,text=None):
 		TTS.setEngine(engine,True)
 		TTS.setVoice(voice)
 		TTS.setRate(rate)
-		#TTS.setPitch(pitch)
+		TTS.setPitch(pitch)
 		TTS.setVolume(volume)
 		TTS.update()
 		wav = TTS.getWavStream(text)
@@ -134,11 +135,11 @@ class SpeechHTTPRequestHandler(object):
 		return file_generator(wav)
 				
 	@cherrypy.expose
-	def say(self,engine=None,voice=None,rate=None,volume=None,text=None):
+	def say(self,engine=None,voice=None,rate=None,pitch=None,volume=None,text=None):
 		TTS.setEngine(engine)
 		TTS.setVoice(voice)
 		TTS.setRate(rate)
-		#TTS.setPitch(pitch)
+		TTS.setPitch(pitch)
 		TTS.setVolume(volume)
 		TTS.update()
 		if not text: raise cherrypy.HTTPError(status=403)
