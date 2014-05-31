@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-__version__ = '0.0.5'
+__version__ = '0.0.6'
 
 import os, sys, ConfigParser, socket, cgi, optparse, copy
 sys.path.insert(0,os.path.join(os.path.dirname(__file__),'lib'))
@@ -61,6 +61,7 @@ class TTSHandler:
 	def setVolume(self,volume):
 		if not volume: return
 		if not strIsNumber(volume): return
+		volume = self.backend.scaleVolume(int(volume),12)
 		util.setSetting('volume.' + self.backend.provider, volume)
 	
 	def update(self):
