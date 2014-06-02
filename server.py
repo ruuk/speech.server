@@ -302,4 +302,4 @@ def start(main=False):
 	util.LOG('ENDED')
 	
 if __name__ == '__main__':
-	start()
+	start(True)
