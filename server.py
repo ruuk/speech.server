@@ -129,7 +129,11 @@ class SpeechHTTPRequestHandler(object):
 		TTS.setVolume(volume)
 		TTS.update()
 		wav = TTS.getWavStream(text)
-		if not wav: raise cherrypy.HTTPError(status=403)
+		if not wav:
+			if not text:
+				raise cherrypy.HTTPError(status=400)
+			else:
+				raise cherrypy.HTTPError(status=500)
 		util.LOG('[{0}] {1} - WAV: {2}'.format(cherrypy.request.remote.ip,TTS.backend.provider,text.decode('utf-8')))
 		wav.seek(0)
 		cherrypy.response.headers['Content-Type'] = "audio/x-wav"
@@ -143,7 +147,7 @@ class SpeechHTTPRequestHandler(object):
 		TTS.setPitch(pitch)
 		TTS.setVolume(volume)
 		TTS.update()
-		if not text: raise cherrypy.HTTPError(status=403)
+		if not text: raise cherrypy.HTTPError(status=400)
 		util.LOG('[{0}] {1} - SAY: {2}'.format(cherrypy.request.remote.ip,TTS.backend.provider,text.decode('utf-8')))
 		TTS.say(text)
 		return ''
@@ -156,13 +160,13 @@ class SpeechHTTPRequestHandler(object):
 	@cherrypy.expose
 	def voices(self,engine=None):
 		voices = TTS.voices(engine)
-		if not voices: raise cherrypy.HTTPError(status=500)
+		if not voices: raise cherrypy.HTTPError(status=501)
 		return voices
 		
 	@cherrypy.expose
 	def engines(self,method=None):
 		engines = TTS.engines(method=='wav')
-		if not engines: raise cherrypy.HTTPError(status=500)
+		if not engines: raise cherrypy.HTTPError(status=501)
 		return engines
 	
 	@cherrypy.expose
