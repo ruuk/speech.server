@@ -39,6 +39,7 @@ class TTSHandler:
 			if self.preferred_player:
 				util.setSetting('player.' + provider, self.preferred_player)
 			self.backend = backend()
+			self.backend.setWavStreamMode()
 
 	def setVoice(self,voice):
 		if not self.backend or not voice or not '.' in voice: return
