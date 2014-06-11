@@ -1,6 +1,6 @@
 #! /usr/bin/env python
 
-__version__ = '0.0.6'
+__version__ = '0.0.7'
 
 import os, sys, ConfigParser, socket, cgi, optparse, copy
 sys.path.insert(0,os.path.join(os.path.dirname(__file__),'lib'))
